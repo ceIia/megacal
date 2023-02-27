@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { signal } from "@preact/signals-react";
 import clsx from "clsx";
-import { FpsView } from "react-fps";
 
 type Campaign = {
   name: string;
@@ -71,10 +70,10 @@ const addMonths = (count: number, direction: "before" | "after") => {
     10,
     direction === "before"
       ? newMonths[0].toDate()
-      : newMonths[newMonths.length - count].toDate(),
+      : newMonths[newMonths.length - 1].toDate(),
     direction === "before"
       ? newMonths[count].toDate()
-      : newMonths[newMonths.length - 1].toDate()
+      : newMonths[newMonths.length - 1 + count].toDate()
   ).then((fetchedCampaigns) => {
     campaigns.value = [...campaigns.value, ...fetchedCampaigns];
   });
@@ -89,17 +88,26 @@ function App() {
       months.value[months.value.length - 1].diff(today, "months") * 384;
 
     const newOffset = offset + currentOffset.value;
-    const minOffset = -firstMonthOffset;
-    const maxOffset = -(
-      lastMonthOffset -
-      timelineContainer.current!.offsetWidth +
-      384
-    );
+    if (newOffset > -firstMonthOffset) {
+      // prevent scrolling before the first month
 
-    horizontalOffset.value = Math.min(
-      Math.max(newOffset, minOffset),
-      maxOffset
-    );
+      horizontalOffset.value = -firstMonthOffset;
+    } else if (
+      newOffset <
+      -(lastMonthOffset - timelineContainer.current!.offsetWidth + 384)
+    ) {
+      // prevent scrolling after the last month
+
+      horizontalOffset.value = -(
+        (
+          lastMonthOffset - // last month offset
+          timelineContainer.current!.offsetWidth + // container width
+          384
+        ) // month width
+      );
+    } else {
+      horizontalOffset.value = newOffset;
+    }
   };
 
   useEffect(() => {
@@ -122,7 +130,6 @@ function App() {
 
   return (
     <div className="w-screen h-screen bg-slate-900 p-4 select-none">
-      <FpsView width={120} height={90} top={(containerHeight || 0) - 90} />
       <div className="w-full h-full border border-slate-700 bg-slate-800 rounded-xl overflow-hidden flex">
         <div className="max-w-sm w-screen">
           <div className="border-r border-slate-700 border-solid h-full">
