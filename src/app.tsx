@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { signal } from "@preact/signals-react";
 import clsx from "clsx";
+import { FpsView } from "react-fps";
 
 type Campaign = {
   name: string;
@@ -130,6 +131,7 @@ function App() {
 
   return (
     <div className="w-screen h-screen bg-slate-900 p-4 select-none">
+      <FpsView height={50} width={300} top={(containerHeight || 0) - 50} />
       <div className="w-full h-full border border-slate-700 bg-slate-800 rounded-xl overflow-hidden flex">
         <div className="max-w-sm w-screen">
           <div className="border-r border-slate-700 border-solid h-full">
