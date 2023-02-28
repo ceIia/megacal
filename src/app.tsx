@@ -1,16 +1,19 @@
 import { faker } from "@faker-js/faker";
 import moment from "moment";
-import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { signal } from "@preact/signals-react";
+import { memo, useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { effect, signal } from "@preact/signals-react";
 import clsx from "clsx";
 import { FpsView } from "react-fps";
+import { FixedSizeList as List, ListChildComponentProps } from "react-window";
 
 type Campaign = {
+  id: string;
   name: string;
   startDate: Date;
   endDate: Date;
   color: string;
+  onClick?: (id: string) => void;
 };
 
 // build a list of 50 campaigns (start date (before 1 feb 2023), end date (after 1 march 2023), name)
@@ -23,6 +26,7 @@ const fetchCampaigns = (
     const startDate = faker.date.between(from, to);
 
     return {
+      id: faker.datatype.uuid(),
       name: faker.company.catchPhrase(),
       startDate: startDate,
       endDate: faker.date.between(startDate, to),
@@ -43,11 +47,12 @@ const twelveMonthsAfter = [...Array(12).keys()].map((i) =>
   today.clone().add(i + 1, "month")
 );
 
-const initialOffset = 150;
+const initialHorizontalOffset = 150;
 const daySize = (384 * 12) / 365;
 
-const horizontalOffset = signal(initialOffset);
-const currentOffset = signal(initialOffset);
+const horizontalOffset = signal(initialHorizontalOffset);
+const verticalOffset = signal(0);
+const offsetCheckpoint = signal({ x: initialHorizontalOffset, y: 0 });
 const months = signal([...sixMonthsBefore, today, ...twelveMonthsAfter]);
 const campaigns = signal<Campaign[]>([]);
 
@@ -71,24 +76,36 @@ const addMonths = (count: number, direction: "before" | "after") => {
     10,
     direction === "before"
       ? newMonths[0].toDate()
-      : newMonths[newMonths.length - 1].toDate(),
+      : newMonths[newMonths.length - 1 - count].toDate(),
     direction === "before"
       ? newMonths[count].toDate()
-      : newMonths[newMonths.length - 1 + count].toDate()
+      : newMonths[newMonths.length - 1].toDate()
   ).then((fetchedCampaigns) => {
     campaigns.value = [...campaigns.value, ...fetchedCampaigns];
   });
+
+  console.log(
+    direction === "before"
+      ? newMonths[0].toDate()
+      : newMonths[newMonths.length - 1 - count].toDate(),
+    direction === "before"
+      ? newMonths[count].toDate()
+      : newMonths[newMonths.length - 1].toDate()
+  );
 };
 
-function App() {
+function App({ loading = true }) {
   const timelineContainer = useRef<HTMLDivElement>(null);
+  const dragListener = useRef<HTMLDivElement>(null);
+  const campaignsList = useRef<List>(null);
+  const containerHeight = () => timelineContainer.current?.offsetHeight || 0;
 
-  const updateOffset = (offset: number) => {
+  const updateHorizontalOffset = (offset: number) => {
     const firstMonthOffset = months.value[0].diff(today, "months") * 384;
     const lastMonthOffset =
       months.value[months.value.length - 1].diff(today, "months") * 384;
 
-    const newOffset = offset + currentOffset.value;
+    const newOffset = offset + offsetCheckpoint.value.x;
     if (newOffset > -firstMonthOffset) {
       // prevent scrolling before the first month
 
@@ -111,8 +128,32 @@ function App() {
     }
   };
 
+  const updateVerticalOffset = (offset: number, viewportHeight: number) => {
+    // new offset is the current offset + the offset passed in
+    // it should be clamped between 0 and the height of the container
+    // calculated with the number of campaigns * 48px
+
+    console.log(
+      (campaigns.value.length - 1) * 48 - viewportHeight + 8,
+      verticalOffset.value + offset * -1,
+      viewportHeight
+    );
+
+    verticalOffset.value = Math.max(
+      0,
+      Math.min(
+        (campaigns.value.length - 1) * 48 - viewportHeight + 8,
+        verticalOffset.value + offset * -1
+      )
+    );
+  };
+
+  effect(() => {
+    campaignsList.current?.scrollTo(verticalOffset.value);
+  });
+
   useEffect(() => {
-    fetchCampaigns(10, new Date(2023, 0, 1), new Date(2023, 5, 1)).then(
+    fetchCampaigns(100, new Date(2023, 0, 1), new Date(2023, 5, 1)).then(
       (fetchedCampaigns) => {
         campaigns.value = fetchedCampaigns;
       }
@@ -121,75 +162,119 @@ function App() {
     function wheel(event: WheelEvent) {
       event.preventDefault();
       horizontalOffset.value += event.deltaX * -0.5;
+      updateVerticalOffset(event.deltaY * -0.5, containerHeight());
     }
 
     // add event listeners
     window.addEventListener("wheel", wheel, { passive: false });
-  }, []);
 
-  const containerHeight = timelineContainer.current?.offsetHeight;
+    return () => {
+      // remove event listeners
+      window.removeEventListener("wheel", wheel);
+    };
+  }, []);
 
   return (
     <div className="w-screen h-screen bg-slate-900 p-4 select-none">
-      <FpsView height={50} width={300} top={(containerHeight || 0) - 50} />
+      {process.env.NODE_ENV === "development" && (
+        <FpsView height={50} width={300} top={containerHeight() - 50} />
+      )}
       <div className="w-full h-full border border-slate-700 bg-slate-800 rounded-xl overflow-hidden flex">
-        <div className="max-w-sm w-screen">
-          <div className="border-r border-slate-700 border-solid h-full">
-            <div className="divide-y divide-solid divide-slate-700">
-              <div className="flex items-center h-14 -mt-[0.5px] p-2.5 gap-2.5">
-                <button
-                  className="bg-slate-700 rounded-lg text-slate-100 px-2 py-1"
-                  onClick={() => (horizontalOffset.value = initialOffset)}
-                >
-                  Go to Today
-                </button>
-                <button
-                  className="bg-slate-700 rounded-lg text-slate-100 px-2 py-1"
-                  onClick={() => (horizontalOffset.value = initialOffset)}
-                >
-                  Month ⭥
-                </button>
-              </div>
-
-              {campaigns.value.map((campaign) => (
-                <CampaignLabel campaign={campaign} />
-              ))}
-            </div>
-          </div>
-        </div>
         <div className="w-full h-full overflow-hidden" ref={timelineContainer}>
           <div className="relative h-full">
+            {loading && (
+              <motion.div
+                className="w-48 h-[2px] bg-gradient-to-r from-transparent to-slate-50/60 absolute top-0"
+                // make it go from left to right and fade out + loop
+                animate={{ right: 0, opacity: [0, 0.75, 0.25, 0.75, 0] }}
+                exit={{ right: 0, opacity: 0 }}
+                transition={{
+                  duration: 3,
+                  ease: "easeOut",
+                  repeat: Infinity,
+                }}
+              />
+            )}
+
             <motion.div
+              ref={dragListener}
               id="dragListener"
-              className="inset-0 h-14 absolute z-10 border-b border-solid border-slate-700"
-              drag="x"
-              dragConstraints={{ left: 0, right: 0 }}
+              className="inset-0 h-full absolute z-30 border-b border-solid border-slate-700 overflow-auto"
+              drag
+              dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
               dragElastic={0.1}
-              onDrag={(_, { offset }) => updateOffset(offset.x)}
-              onDragStart={() => (currentOffset.value = horizontalOffset.value)}
-              onDragEnd={() => (currentOffset.value = horizontalOffset.value)}
+              onDrag={(_, { offset }) => {
+                updateHorizontalOffset(offset.x);
+                //updateVerticalOffset(offset.y, containerHeight());
+              }}
+              onDragStart={() => {
+                offsetCheckpoint.value.x = horizontalOffset.value;
+                offsetCheckpoint.value.y = verticalOffset.value;
+              }}
+              onDragEnd={() => {
+                offsetCheckpoint.value.x = horizontalOffset.value;
+                offsetCheckpoint.value.y = verticalOffset.value;
+              }}
             />
 
-            <div className="flex relative">
+            <div className="flex relative overflow-hidden h-full w-full">
               {months.value.map((month, index) => (
-                <Month
-                  month={month}
+                <div
                   key={month.toISOString()}
-                  index={index}
-                  containerHeight={containerHeight || 0}
-                />
+                  style={{
+                    willChange: "transform",
+                    transform: `translateX(${horizontalOffset.value}px)`,
+                  }}
+                >
+                  <Month
+                    month={month}
+                    index={index}
+                    containerHeight={containerHeight()}
+                  />
+                </div>
               ))}
             </div>
 
-            <div className="pt-12 w-full h-full">
-              {campaigns.value.map((campaign, index) => (
-                <CampaignSpan
-                  key={campaign.name}
-                  campaign={campaign}
-                  index={index}
-                />
-              ))}
+            <div
+              className="w-full h-full absolute inset-0 top-14 z-40 [&>*]:pointer-events-none pointer-events-none"
+              style={{
+                height: containerHeight() - 56,
+              }}
+            >
+              <List
+                height={containerHeight() - 56}
+                itemCount={campaigns.value.length}
+                itemSize={48}
+                width={timelineContainer.current?.offsetWidth || 0}
+                ref={campaignsList}
+                className="!overflow-x-hidden pb-4 "
+                overscanCount={1}
+              >
+                {CampaignSpan}
+              </List>
             </div>
+            <AnimatePresence>
+              {(horizontalOffset.value !== initialHorizontalOffset ||
+                verticalOffset.value !== 0) && (
+                <motion.div
+                  className="absolute bottom-2 right-2 p-6 w-64 grid place-items-center bg-slate-900 drop-shadow-lg rounded-md z-50"
+                  initial={{ opacity: 0, y: 32 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 32 }}
+                  transition={{ duration: 0.4, ease: "anticipate" }}
+                >
+                  <button
+                    className="bg-slate-800 text-slate-100 p-2 rounded-md"
+                    onClick={() => {
+                      horizontalOffset.value = initialHorizontalOffset;
+                      verticalOffset.value = 0;
+                    }}
+                  >
+                    go back up
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
@@ -213,6 +298,7 @@ function Month({
   const observer = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
+        console.log(entry.isIntersecting, entry.intersectionRatio);
         if (!entry.isIntersecting) return;
 
         const month = moment(
@@ -243,9 +329,9 @@ function Month({
 
   return (
     <div
-      className="absolute w-96 flex-shrink-0 px-3.5 z-0 h-14"
+      className="absolute w-96 flex-shrink-0 px-3.5 z-[5] h-14"
       style={{
-        left: horizontalOffset.value + month.diff(today, "months") * 384,
+        left: month.diff(today, "months") * 384,
       }}
       id="month"
       data-month={month.format("MMMM YYYY")}
@@ -325,90 +411,69 @@ function Month({
   );
 }
 
-function CampaignSpan({
-  campaign,
-  index,
-}: {
-  campaign: Campaign;
-  index: number;
-}) {
+const CampaignSpan = memo(({ style, index }: ListChildComponentProps) => {
+  const campaign = campaigns.value[index];
   const duration = moment(campaign.endDate).diff(campaign.startDate, "days");
 
   return (
-    <motion.div
-      className="flex items-center justify-between px-2.5 w-full h-12 absolute p-1.5"
-      key={campaign.name}
-      style={{
-        width: duration * daySize + 28,
-        left: `${
-          // based on the start date and the current offset, like the months
-          moment(campaign.startDate).diff(
-            today.clone().startOf("month"),
-            "days"
-          ) *
-            daySize +
-          horizontalOffset.value
-        }px`,
-        top: `${
-          // based on the index of the campaign in the array, like the months
-          index * 48 + 56
-        }px`,
-      }}
-      initial={{ opacity: 0, x: -5 }}
-      animate={{
-        opacity: 1,
-        x: 0,
-        transition: {
-          ease: "anticipate",
-          duration: 0.4,
-          delay: 0.05,
-        },
-      }}
-    >
-      <motion.div
-        className="rounded-lg border-2 border-solid h-full w-full flex items-center pl-2 transition-colors duration-200 ease-in-out group cursor-pointer"
-        style={{
-          borderColor: campaign.color,
-          backgroundColor: `${campaign.color}30`,
-        }}
-        whileHover={{ backgroundColor: campaign.color }}
-      >
-        <p className="text-slate-400 truncate -mt-px text-sm font-medium group-hover:text-white transition-colors duration-200 ease-in-out">
-          {campaign.name}
-          <span className="ml-2 font-normal text-slate-500 group-hover:text-slate-200 transition-colors duration-200 ease-in-out">
-            {moment(campaign.startDate).format("MMM D")} -{" "}
-            {moment(campaign.endDate).format("MMM D")}
-          </span>
-        </p>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-function CampaignLabel({ campaign }: { campaign: Campaign }) {
-  return (
-    <motion.div
-      className="flex items-center px-4 w-full h-12 relative"
-      key={campaign.name}
-      initial={{ opacity: 0, x: -5 }}
-      animate={{
-        opacity: 1,
-        x: 0,
-        transition: {
-          ease: "anticipate",
-          duration: 0.4,
-        },
-      }}
-    >
+    <div style={style} className="!pointer-events-none">
       <div
-        className="w-2 h-2 rounded-full bg-slate-100 mr-4 flex-shrink-0"
+        className="!pointer-events-none"
         style={{
-          backgroundColor: campaign.color,
+          // transform x & y
+          willChange: "transform",
+          transform: `translateX(${horizontalOffset.value}px)`,
         }}
-      />
-      <span className="text-slate-200 truncate">{campaign.name}</span>
-    </motion.div>
+      >
+        <motion.div
+          initial={{ opacity: 0, x: -5 }}
+          animate={{
+            opacity: 1,
+            x: 0,
+            transition: {
+              ease: "anticipate",
+              duration: 0.4,
+              delay: 0.05,
+            },
+          }}
+          className="!pointer-events-none"
+        >
+          <button
+            className="flex items-center justify-between px-2.5 w-full h-12 p-1.5 z-40 pointer-events-auto"
+            key={campaign.name}
+            style={{
+              width: duration * daySize + 28,
+              transform: `translateX(${
+                moment(campaign.startDate).diff(
+                  today.clone().startOf("month"),
+                  "days"
+                ) * daySize
+              }px)`,
+            }}
+            onClick={() => campaign.onClick?.(campaign.id)}
+            aria-label={campaign.name}
+          >
+            <motion.div
+              className="rounded-lg border-2 border-solid h-full w-full flex items-center pl-2 transition-colors duration-200 ease-in-out group cursor-pointer"
+              style={{
+                borderColor: campaign.color,
+                backgroundColor: `${campaign.color}30`,
+              }}
+              whileHover={{ backgroundColor: campaign.color }}
+            >
+              <p className="text-slate-400 truncate -mt-px text-sm font-medium group-hover:text-white transition-colors duration-200 ease-in-out">
+                {campaign.name}
+                <span className="ml-2 font-normal text-slate-500 group-hover:text-slate-200 transition-colors duration-200 ease-in-out">
+                  {moment(campaign.startDate).format("MMM D")} -{" "}
+                  {moment(campaign.endDate).format("MMM D")}
+                </span>
+              </p>
+            </motion.div>
+          </button>
+        </motion.div>
+      </div>
+    </div>
   );
-}
+});
 
 export default App;
