@@ -15,6 +15,9 @@ heavily inspired by linear.
 
 **known issues:**
 - if u scroll to fast on the sides, the intersection observers might trigger once, but since you're already too far, you've already scrolled past the new one, thus not adding new months. this could be avoided by restricting the max/min scroll offset, but even then, if your screen is too small, it still won't load the next months.
+- wheel scroll works on X and Y.
+- drag scroll only works on X.
+- scroll bar is only visible vertically.
 
 **potential improvements:**
 - better lateral infinite scroll
@@ -23,6 +26,7 @@ heavily inspired by linear.
 - add loading skeleton
 - add time density selector (months, years, ... currently quarter, kinda)
 - refactor to an actual component
+- possible offload or better UI for out of screen items
 
 **type:**
 ```ts
