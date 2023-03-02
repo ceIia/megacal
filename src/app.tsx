@@ -1,8 +1,13 @@
 import { faker } from "@faker-js/faker";
 import moment from "moment";
-import { memo, useEffect, useRef } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { effect, signal } from "@preact/signals-react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  AnimatePresence,
+  motion,
+  useMotionValue,
+  useTransform,
+} from "framer-motion";
+import { effect, signal, useSignal } from "@preact/signals-react";
 import clsx from "clsx";
 import { FpsView } from "react-fps";
 import { FixedSizeList as List, ListChildComponentProps } from "react-window";
@@ -83,15 +88,13 @@ const addMonths = (count: number, direction: "before" | "after") => {
   ).then((fetchedCampaigns) => {
     campaigns.value = [...campaigns.value, ...fetchedCampaigns];
   });
+};
 
-  console.log(
-    direction === "before"
-      ? newMonths[0].toDate()
-      : newMonths[newMonths.length - 1 - count].toDate(),
-    direction === "before"
-      ? newMonths[count].toDate()
-      : newMonths[newMonths.length - 1].toDate()
-  );
+const fixOverflowScroll = () => {
+  setTimeout(() => {
+    horizontalOffset.value += 1;
+    horizontalOffset.value -= 1;
+  }, 100);
 };
 
 function App({ loading = true }) {
@@ -133,12 +136,6 @@ function App({ loading = true }) {
     // it should be clamped between 0 and the height of the container
     // calculated with the number of campaigns * 48px
 
-    console.log(
-      (campaigns.value.length - 1) * 48 - viewportHeight + 8,
-      verticalOffset.value + offset * -1,
-      viewportHeight
-    );
-
     verticalOffset.value = Math.max(
       0,
       Math.min(
@@ -153,11 +150,11 @@ function App({ loading = true }) {
   });
 
   useEffect(() => {
-    fetchCampaigns(100, new Date(2023, 0, 1), new Date(2023, 5, 1)).then(
-      (fetchedCampaigns) => {
+    fetchCampaigns(8, new Date(2023, 0, 1), new Date(2023, 5, 1))
+      .then((fetchedCampaigns) => {
         campaigns.value = fetchedCampaigns;
-      }
-    );
+      })
+      .then(() => fixOverflowScroll());
 
     function wheel(event: WheelEvent) {
       event.preventDefault();
@@ -298,7 +295,6 @@ function Month({
   const observer = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
-        console.log(entry.isIntersecting, entry.intersectionRatio);
         if (!entry.isIntersecting) return;
 
         const month = moment(
@@ -415,8 +411,27 @@ const CampaignSpan = memo(({ style, index }: ListChildComponentProps) => {
   const campaign = campaigns.value[index];
   const duration = moment(campaign.endDate).diff(campaign.startDate, "days");
 
+  const spanReference = useRef<HTMLDivElement>(null);
+  const containerReference = useRef<HTMLDivElement>(null);
+  const span = spanReference.current?.getBoundingClientRect();
+  const container = containerReference.current?.getBoundingClientRect();
+
+  const textOffset = useSignal(0);
+
+  useLayoutEffect(() => {
+    if (spanReference.current && containerReference.current) {
+      const offset = (span?.left ?? 0) - (container?.left ?? 0);
+
+      textOffset.value = offset * -1;
+    }
+  }, [span, container, textOffset]);
+
   return (
-    <div style={style} className="!pointer-events-none">
+    <div
+      style={style}
+      className="!pointer-events-none"
+      ref={containerReference}
+    >
       <div
         className="!pointer-events-none"
         style={{
@@ -454,20 +469,30 @@ const CampaignSpan = memo(({ style, index }: ListChildComponentProps) => {
             aria-label={campaign.name}
           >
             <motion.div
-              className="rounded-lg border-2 border-solid h-full w-full flex items-center pl-2 transition-colors duration-200 ease-in-out group cursor-pointer"
+              className="rounded-lg border-2 border-solid h-full w-full flex items-center transition-colors duration-200 ease-in-out group cursor-pointer overflow-hidden"
               style={{
                 borderColor: campaign.color,
                 backgroundColor: `${campaign.color}30`,
               }}
               whileHover={{ backgroundColor: campaign.color }}
+              ref={spanReference}
             >
-              <p className="text-slate-400 truncate -mt-px text-sm font-medium group-hover:text-white transition-colors duration-200 ease-in-out">
+              <motion.p
+                className="text-slate-400 truncate -mt-px text-sm font-medium group-hover:text-white transition-colors duration-200 ease-in-out ml-2"
+                animate={{
+                  x: Math.max(0, textOffset.value),
+                  transition: {
+                    ease: "linear",
+                    duration: 0.3,
+                  },
+                }}
+              >
                 {campaign.name}
                 <span className="ml-2 font-normal text-slate-500 group-hover:text-slate-200 transition-colors duration-200 ease-in-out">
                   {moment(campaign.startDate).format("MMM D")} -{" "}
                   {moment(campaign.endDate).format("MMM D")}
                 </span>
-              </p>
+              </motion.p>
             </motion.div>
           </button>
         </motion.div>
